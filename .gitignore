@@ -8,3 +8,5 @@ runs/
 my_vocoder
 tests/
 .gradio/
+conda_env/
+ckpts/
