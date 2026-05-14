@@ -1,3 +1,11 @@
+try:
+    import pynini
+    from nemo_text_processing.text_normalization.normalize import Normalizer
+    _ = Normalizer(input_case='cased', lang='en')
+    print("DEBUG: NeMo initialization successful!")
+except Exception as e:
+    print(f"DEBUG: NeMo initialization failed: {e}")
+
 import argparse
 import logging
 import re
@@ -758,7 +766,6 @@ BUTTON_CSS = """
 .plain-markdown,
 .plain-markdown .prose,
 .plain-markdown > div {
-    background: #ffffff !important;
     border: 0 !important;
     box-shadow: none !important;
 }
@@ -892,30 +899,36 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
                     preview_audio_output = gr.Audio(label="Generated Audio")
                     gr.Markdown("**Example Prompts**", elem_classes=["plain-markdown"])
                     translate_english_sample_btn = gr.Button("English Sample", elem_classes=["orange-button"])
+    
     choose_model.change(
         switch_model,
         inputs=[choose_model, ref_text_input],
         outputs=[ref_text_input],
     )
+
     text_mode_input.change(
         switch_text_mode,
         inputs=[text_mode_input],
         outputs=[gen_text_input, code_switch_panel],
     )
+
     add_segment_btn.click(
         add_code_switch_segment,
         inputs=[code_switch_count],
         outputs=[code_switch_count] + code_switch_rows,
     )
+
     remove_segment_btn.click(
         remove_code_switch_segment,
         inputs=[code_switch_count] + code_switch_inputs,
         outputs=[code_switch_count] + code_switch_rows + code_switch_inputs,
     )
+
     code_switch_sample_btn.click(
         load_code_switch_sample,
         outputs=[dominant_language_input, code_switch_count] + code_switch_rows + code_switch_inputs,
     )
+    
     generate_btn.click(
         infer,
         inputs=[
@@ -928,11 +941,27 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
         ] + code_switch_inputs,
         outputs=[audio_output, ref_text_input],
     )
+
     select_all_targets_btn.click(
         select_all_target_languages,
         inputs=[translate_ref_language_input],
         outputs=[target_languages_input],
     )
+    
+    ref_audio_input.change(
+        fn=lambda: (
+            gr.update(value=""),
+            gr.update(value=None),
+            "Auto Detect"
+        ),
+        outputs=[ref_text_input, audio_output]
+    )
+
+    ref_audio_input.change(
+        fn=lambda: "", 
+        outputs=[ref_text_input]
+    )
+
     translate_english_sample_btn.click(
         load_translate_english_sample,
         outputs=[
@@ -941,6 +970,7 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
             translate_ref_language_input,
         ],
     )
+    
     translate_btn.click(
         translate_targets,
         inputs=[
@@ -958,6 +988,7 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
             translate_ref_text_input,
         ],
     )
+    
     translate_clone_btn.click(
         clone_translations,
         inputs=[
@@ -977,6 +1008,7 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
             translate_ref_text_input,
         ],
     )
+    
     preview_language_input.change(
         preview_translate_result,
         inputs=[
@@ -991,6 +1023,23 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
             translate_results_state,
             current_preview_language_state,
         ],
+    )
+    
+    translate_ref_audio_input.change(
+        fn=lambda: (
+            "",
+            gr.update(value=None, choices=[]),
+            "",
+            {},
+            None
+        ),
+        outputs=[
+            translate_ref_text_input, 
+            preview_language_input, 
+            preview_translated_text, 
+            translate_results_state, 
+            current_preview_language_state
+        ]
     )
 
 
