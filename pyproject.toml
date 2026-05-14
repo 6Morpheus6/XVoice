@@ -39,7 +39,6 @@ dependencies = [
     "fasttext-wheel",
     "librosa",
     "matplotlib",
-    "nemo_text_processing",
     "num2words",
     "numpy<=1.26.4; python_version<='3.10'",
     "openai-whisper",
