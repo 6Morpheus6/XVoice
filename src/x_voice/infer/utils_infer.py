@@ -638,7 +638,7 @@ def _init_ref_wav_denoiser() -> bool:
     _REF_WAV_DENOISER["initialized"] = True
     try:
         # DeepFilterNet2 is a strong speech denoiser and supports real-world noise.
-        with suppress_stdout_stderr():
+        if True: #with suppress_stdout_stderr():
             from df.enhance import enhance, init_df
 
             model, state, _ = init_df()
@@ -872,15 +872,16 @@ def split_lang_spans_by_chunks(spans, chunks):
     return chunk_spans
 
 
-def prepare_codeswitch_text_tokens_and_lang_ids(spans, tokenizer_name, ipa_tokenizer_getter, lang_to_id_map):
+def prepare_codeswitch_text_tokens_and_lang_ids(spans, tokenizer_name, ipa_tokenizer_getter, lang_to_id_map, ref_lang="en"):
     tokens = []
     lang_ids = []
     for lang, span_text in spans:
-        if not span_text:
+        if not span_text or not span_text.strip():
             continue
         span_tokens = prepare_text_tokens(span_text, tokenizer_name, lang, ipa_tokenizer_getter)
         tokens.extend(span_tokens)
-        lang_ids.extend([lang_to_id(lang, lang_to_id_map)] * len(span_tokens))
+        l_id = lang_to_id(lang, lang_to_id_map, fallback_lang=ref_lang)
+        lang_ids.extend([l_id] * len(span_tokens))
     return tokens, lang_ids
 
 
@@ -938,6 +939,8 @@ def get_ipa_tokenizer_cache(tokenizer_name, with_stress):
         if tokenizer_name not in tokenizer_class_map:
             raise ValueError(f"Unsupported IPA tokenizer: {tokenizer_name}")
         if lang not in cache:
+            target_lang_id = get_ipa_id(lang)
+            print(f"[DEBUG] Initializing IPA Tokenizer for {lang} with ID: {target_lang_id}")
             cache[lang] = tokenizer_class_map[tokenizer_name](
                 language=get_ipa_id(lang),
                 with_stress=with_stress,
@@ -945,6 +948,37 @@ def get_ipa_tokenizer_cache(tokenizer_name, with_stress):
         return cache[lang]
 
     return get_tokenizer_for_lang
+
+
+def prepare_text_tokens(text, tokenizer_name, lang, ipa_tokenizer_getter):
+    if tokenizer_name == "pinyin":
+        return convert_char_to_pinyin([text], polyphone=True)[0]
+    
+    if tokenizer_name.startswith("ipa"):
+        ipa_tokenizer = ipa_tokenizer_getter(lang)
+        input_texts = [text] if isinstance(text, str) else text
+        final_phonemes = []
+
+        for i, t in enumerate(input_texts):
+            t_clean = " ".join(t.split()).strip()
+            res = ipa_tokenizer([t_clean])
+            
+            if isinstance(res, list):
+                if len(res) > 0:
+                    final_phonemes.append(res[0])
+                else:
+                    final_phonemes.append("")
+            else:
+                final_phonemes.append(res if isinstance(res, str) else "")
+
+        if isinstance(text, str):
+            result = str_to_list_ipa_all(final_phonemes[0] if final_phonemes else "", tokenizer_name, lang)
+            return result
+        else:
+            results = [str_to_list_ipa_all(p, tokenizer_name, lang) for p in final_phonemes]
+            return results
+
+    return list(text)
 
 
 def normalize_text_for_lang(text, lang, normalizer_cache):
@@ -955,9 +989,9 @@ def normalize_text_for_lang(text, lang, normalizer_cache):
         return text
 
     if lang not in normalizer_cache:
-        with suppress_stdout_stderr():
+        if True: #with suppress_stdout_stderr():
             normalizer_cache[lang] = TextNormalizer(language=lang)
-    with suppress_stdout_stderr():
+    if True: #with suppress_stdout_stderr():
         return normalizer_cache[lang].normalize(text)
 
 
@@ -996,16 +1030,6 @@ def translate_text_nllb(text, src_lang, tgt_lang, device_name=device, show_info=
     return tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].strip()
 
 
-def prepare_text_tokens(text, tokenizer_name, lang, ipa_tokenizer_getter):
-    if tokenizer_name == "pinyin":
-        return convert_char_to_pinyin([text], polyphone=True)[0]
-    if tokenizer_name.startswith("ipa"):
-        ipa_tokenizer = ipa_tokenizer_getter(lang)
-        ipa_text = ipa_tokenizer(text)
-        return str_to_list_ipa_all(ipa_text, tokenizer_name, lang)
-    return list(text)
-
-
 def ensure_ref_text_punctuation(ref_text):
     if not ref_text:
         return ref_text
@@ -1032,41 +1056,39 @@ def count_lang_spans_units(spans):
 def chunk_text_by_units(text, lang, max_units):
     chunks = []
     current_chunk = ""
-    sentences = re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，。！？])", text)
+    sentences = [s.strip() for s in re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，。！？])", text) if s.strip()]
 
     for sentence in sentences:
-        if not sentence:
-            continue
         if count_units(current_chunk, lang) + count_units(sentence, lang) <= max_units:
-            current_chunk += sentence + " " if len(sentence[-1].encode("utf-8")) == 1 else sentence
+            current_chunk += (sentence + " ")
         else:
             if current_chunk:
                 chunks.append(current_chunk.strip())
-            current_chunk = sentence + " " if len(sentence[-1].encode("utf-8")) == 1 else sentence
+            current_chunk = (sentence + " ")
 
     if current_chunk:
         chunks.append(current_chunk.strip())
-    return chunks or [text.strip()]
+
+    return chunks if chunks else [text.strip()]
 
 
-def chunk_text_by_chars(text, max_chars=135):
+def chunk_text_by_chars(text, max_chars=300):
     chunks = []
     current_chunk = ""
-    sentences = re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，。！？])", text)
+    sentences = [s.strip() for s in re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，.！？])", text) if s.strip()]
 
     for sentence in sentences:
-        if not sentence:
-            continue
-        if len(current_chunk.encode("utf-8")) + len(sentence.encode("utf-8")) <= max_chars:
-            current_chunk += sentence + " " if len(sentence[-1].encode("utf-8")) == 1 else sentence
+        if len(current_chunk.encode("utf-8")) + len(sentence.encode("utf-8")) + 1 <= max_chars:
+            current_chunk += (sentence + " ")
         else:
             if current_chunk:
                 chunks.append(current_chunk.strip())
-            current_chunk = sentence + " " if len(sentence[-1].encode("utf-8")) == 1 else sentence
+            current_chunk = (sentence + " ")
 
     if current_chunk:
         chunks.append(current_chunk.strip())
-    return chunks or [text.strip()]
+        
+    return chunks if chunks else [text.strip()]
 
 
 def prepare_ref_audio_tensor(ref_audio, target_rms_value, denoise_ref, device_name):
@@ -1122,9 +1144,20 @@ def estimate_duration(
     return ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / local_speed)
 
 
-def lang_to_id(lang, lang_to_id_map):
-    unknown_id = len(lang_to_id_map)
-    return lang_to_id_map.get(lang, unknown_id)
+def lang_to_id(lang, lang_to_id_map, fallback_lang="en"):
+    if lang not in lang_to_id_map:
+        actual_fallback = fallback_lang if fallback_lang in lang_to_id_map else "en"
+        fallback_id = lang_to_id_map.get(actual_fallback, 0)
+        print(f"[DEBUG] !!! WARNUNG: Sprache '{lang}' unbekannt. Nutze Fallback '{actual_fallback}' (ID {fallback_id}).")
+        return fallback_id
+    
+    val = lang_to_id_map[lang]
+
+    if val >= len(lang_to_id_map) and len(lang_to_id_map) > 0:
+        print(f"[DEBUG] !!! KRITISCH: ID {val} für '{lang}' ist zu hoch. Nutze ID 0.")
+        return 0
+        
+    return val
 
 
 def load_srp_model(srp_model_cfg_file, srp_ckpt_file, device_name):
@@ -1226,16 +1259,16 @@ def infer_xvoice_process(
     if len(all_batches) == 0:
         return None, target_sample_rate, None
 
-    # Construct batch inputs
-    final_text_list = []
-    language_ids_list = []
-    time_language_ids_list = []
-    durations = []
+    generated_waves = []
+    spectrograms = []
     
     ref_tokens = prepare_text_tokens(ref_text, tokenizer_name, ref_lang, ipa_tokenizer_getter)
     ref_lang_id = lang_to_id(ref_lang, lang_to_id_map)
 
-    for batch_text, batch_spans, dominant_lang in all_batches:
+    print(f"[DEBUG] Starting sequential processing of {len(all_batches)} chunks...")
+
+    # Serial processing of chunks
+    for i, (batch_text, batch_spans, batch_dominant_lang) in enumerate(all_batches):
         batch_units = count_lang_spans_units(batch_spans)
         local_batch_speed = local_speed
         if batch_units < 4:
@@ -1246,77 +1279,56 @@ def infer_xvoice_process(
             tokenizer_name,
             ipa_tokenizer_getter,
             lang_to_id_map,
+            ref_lang=ref_lang
         )
-        final_text_list.append(ref_tokens + gen_tokens)
         
-        dominant_lang_id = lang_to_id(dominant_lang, lang_to_id_map)
-        language_ids_list.append([ref_lang_id] * len(ref_tokens) + gen_lang_ids)
-        time_language_ids_list.append(dominant_lang_id)
+        current_text_list = [ref_tokens + gen_tokens]
+        current_lang_ids = torch.tensor([[ref_lang_id] * len(ref_tokens) + gen_lang_ids], dtype=torch.long, device=device_name)
+        
+        dominant_lang_id = lang_to_id(batch_dominant_lang, lang_to_id_map)
+        current_time_lang_ids = torch.tensor([dominant_lang_id], dtype=torch.long, device=device_name)
 
         if fix_duration_value is not None:
             duration = int(fix_duration_value * target_sample_rate / hop_length)
-        elif sp_type == "pretrained":
-            if predicted_speed is None:
-                raise ValueError("sp_type='pretrained' requires srp_ckpt_file and a loaded SRP model.")
-            gen_seconds = batch_units / max(predicted_speed, 0.1) / local_batch_speed
-            duration = ref_audio_len + int(gen_seconds * target_sample_rate / hop_length)
         elif sp_type == "syllable":
             ref_units = count_units(ref_text, ref_lang)
             duration = ref_audio_len + int(ref_audio_len / ref_units * batch_units / local_batch_speed)
         else:
-            ref_text_len = max(len(ref_text.encode("utf-8")), 1)
-            gen_text_len = max(len(batch_text.encode("utf-8")), 1)
-            duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / local_batch_speed)
-        durations.append(duration)
-
-    B = len(all_batches)
-    # CFM.sample expects raw waveform as [B, T] and computes mel internally.
-    cond_batch = audio.expand(B, -1)
-
-    duration_tensor = torch.tensor(durations, dtype=torch.long, device=device_name)
-    
-    # language_ids_list is a list of lists of varying lengths.
-    # In CFM sample, language_ids can be [b, nt]. We need to pad it to max_seq_len.
-    # We can use torch.nn.utils.rnn.pad_sequence
-    max_len = max(len(ids) for ids in language_ids_list)
-    padded_lang_ids = [ids + [-1] * (max_len - len(ids)) for ids in language_ids_list]
-    language_ids_tensor = torch.tensor(padded_lang_ids, dtype=torch.long, device=device_name)
-    time_language_ids_tensor = torch.tensor(time_language_ids_list, dtype=torch.long, device=device_name)
-    infer_mode_flag = next(model_obj.transformer.parameters()).dtype == torch.float16
-    with torch.inference_mode():
-        generated, _ = model_obj.sample(
-            cond=cond_batch,
-            text=final_text_list,
-            duration=duration_tensor,
-            steps=nfe_step_value,
-            cfg_strength=cfg_strength_value,
-            sway_sampling_coef=sway_sampling_coef_value,
-            language_ids=language_ids_tensor,
-            time_language_ids=time_language_ids_tensor,
-            cfg_schedule=cfg_schedule_value,
-            cfg_decay_time=cfg_decay_time_value,
-            reverse=reverse,
-            layered=layered,
-            cfg_strength2=cfg_strength2_value,
-            infer_mode=infer_mode_flag,
-        )
-
-        if post_processing:
-            generated = audio_post_processing(generated, threshold=2.5, limit=3.5)
-
-        generated = generated.to(torch.float32)
+            duration = ref_audio_len + int(ref_audio_len / max(len(ref_text.encode("utf-8")), 1) * max(len(batch_text.encode("utf-8")), 1) / local_batch_speed)
         
-        generated_waves = []
-        spectrograms = []
+        duration_tensor = torch.tensor([duration], dtype=torch.long, device=device_name)
+        cond_batch = audio.expand(1, -1) 
+
+        infer_mode_flag = next(model_obj.transformer.parameters()).dtype == torch.float16
         
-        for i in range(B):
-            duration_i = durations[i]
-            gen_i = generated[i:i+1] # [1, max_duration, num_channels]
+        with torch.inference_mode():
+            print(f"  -> Processing Chunk {i+1}/{len(all_batches)}...")
+            generated, _ = model_obj.sample(
+                cond=cond_batch,
+                text=current_text_list,
+                duration=duration_tensor,
+                steps=nfe_step_value,
+                cfg_strength=cfg_strength_value,
+                sway_sampling_coef=sway_sampling_coef_value,
+                language_ids=current_lang_ids, 
+                time_language_ids=current_time_lang_ids,
+                cfg_schedule=cfg_schedule_value,
+                cfg_decay_time=cfg_decay_time_value,
+                reverse=reverse,
+                layered=layered,
+                cfg_strength2=cfg_strength2_value,
+                infer_mode=infer_mode_flag,
+            )
+
+            if post_processing:
+                generated = audio_post_processing(generated, threshold=2.5, limit=3.5)
+
+            generated = generated.to(torch.float32)
             
             if reverse:
-                gen_i = gen_i[:, : duration_i - ref_audio_len, :]
+                gen_i = generated[0:1, : duration - ref_audio_len, :]
             else:
-                gen_i = gen_i[:, ref_audio_len:duration_i, :]
+                gen_i = generated[0:1, ref_audio_len:duration, :]
                 
             generated_mel_spec = gen_i.permute(0, 2, 1)
             
@@ -1329,6 +1341,7 @@ def infer_xvoice_process(
 
             if rms < target_rms_value:
                 generated_wave = generated_wave * rms / target_rms_value
+            
             if loudness_norm:
                 generated_wave = normalize_audio_loudness(generated_wave, target_sample_rate, target_lufs=-23.0)
 
