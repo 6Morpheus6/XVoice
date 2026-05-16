@@ -6,6 +6,7 @@ try:
 except Exception as e:
     print(f"DEBUG: NeMo initialization failed: {e}")
 
+import platform
 import argparse
 import logging
 import re
@@ -39,6 +40,21 @@ def _silence_inference_logs():
         "huggingface_hub",
     ):
         logging.getLogger(logger_name).setLevel(logging.ERROR)
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
+    if platform.system() == "Windows":
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        
+        old_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+        def patched_call_connection_lost(self, exc):
+            try:
+                old_call_connection_lost(self, exc)
+            except (ConnectionResetError, OSError):
+                pass
+
+        _ProactorBasePipeTransport._call_connection_lost = patched_call_connection_lost
+
     try:
         from loguru import logger as loguru_logger
 
@@ -162,6 +178,10 @@ CODE_SWITCH_SAMPLE = [
     ("English(en)", "I was planning to go out for dinner, but"),
     ("Mandarin(zh)", "外面好像快下雨了."),
     ("English(en)", "Maybe I’ll just stay home and order something."),
+]
+TRANSLATE_LANGUAGE_CHOICES = [
+    choice for choice in LANGUAGE_CHOICES 
+    if not any(bad_code in choice for bad_code in ["(cs)", "(el)", "(ja)"])
 ]
 
 
@@ -683,7 +703,7 @@ def select_all_target_languages(ref_language_choice):
     return gr.update(
         value=[
             language_choice
-            for language_choice in LANGUAGE_CHOICES
+            for language_choice in TRANSLATE_LANGUAGE_CHOICES
             if parse_language_choice(language_choice) != ref_lang
         ]
     )
@@ -876,7 +896,7 @@ Stage 1 requires the reference voice to be in one of the 30 supported languages,
                         label="Reference Language",
                     )
                     target_languages_input = gr.Dropdown(
-                        choices=LANGUAGE_CHOICES,
+                        choices=TRANSLATE_LANGUAGE_CHOICES,
                         label="Target Languages",
                         multiselect=True,
                     )
